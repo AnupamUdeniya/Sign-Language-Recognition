@@ -32,18 +32,24 @@ https://www.kaggle.com/datasets/grassknoted/asl-alphabet
 ## Project Structure
 
 ```
-scripts/
-    model.py
-    train.py
-    evaluate.py
-    asl_dataset.py
-    webcam_test.py
-
-web/
-    server.py
-    index.html
-    app.js
-    styles.css
+Sign-Language-Recognition/
+│
+├── scripts/
+│   ├── model.py
+│   ├── train.py
+│   ├── evaluate.py
+│   ├── asl_dataset.py
+│   └── webcam_test.py
+│
+├── web/
+│   ├── server.py
+│   ├── index.html
+│   ├── app.js
+│   └── styles.css
+│
+├── requirements-web.txt
+├── .gitignore
+└── README.md
 ```
 
 ## Installation
