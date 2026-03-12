@@ -69,7 +69,15 @@ python scripts/webcam_test.py
 ```
 python web/server.py
 ```
+## Web Demo
+```
+Run the web application locally:
 
+python web/server.py
+
+Then open in browser:
+http://127.0.0.1:5000
+```
 ## Author
 
 Anupam Udeniya
