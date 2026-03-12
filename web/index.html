@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ASL Vision Studio</title>
+  <meta name="description" content="Interactive ASL sign detection interface with live camera preview, upload analysis, and a modern visual dashboard.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
+
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Realtime Sign Intelligence</p>
+        <h1>ASL Vision Studio</h1>
+      </div>
+      <div class="topbar-badge">
+        <span class="status-dot"></span>
+        Hybrid model experience
+      </div>
+    </header>
+
+    <main class="dashboard">
+      <section class="hero card">
+        <div class="hero-copy">
+          <p class="section-tag">Today’s interface for sign recognition</p>
+          <h2>Camera-first ASL detection with a cleaner, more modern feel.</h2>
+          <p class="hero-text">
+            Explore live webcam preview, upload hand-sign images, watch confidence bars update from the real model,
+            and build phrases from the strongest predictions.
+          </p>
+          <div class="hero-actions">
+            <button id="startCameraBtn" class="primary-btn">Start camera</button>
+            <button id="liveDetectBtn" class="ghost-btn">Start live detection</button>
+          </div>
+        </div>
+
+        <div class="hero-stats">
+          <article class="stat-chip">
+            <span class="stat-label">Classes</span>
+            <strong>29</strong>
+          </article>
+          <article class="stat-chip">
+            <span class="stat-label">Backbone</span>
+            <strong>ResNet50 + Transformer</strong>
+          </article>
+          <article class="stat-chip">
+            <span class="stat-label">Mode</span>
+            <strong>Live + Upload + API</strong>
+          </article>
+        </div>
+      </section>
+
+      <section class="viewer card">
+        <div class="panel-header">
+          <div>
+            <p class="section-tag">Input feed</p>
+            <h3>Vision console</h3>
+          </div>
+          <div class="panel-actions">
+            <button id="stopCameraBtn" class="mini-btn">Stop camera</button>
+            <button id="analyzeFrameBtn" class="mini-btn">Analyze frame</button>
+            <label class="upload-btn" for="imageUpload">Upload image</label>
+            <input id="imageUpload" type="file" accept="image/*" hidden>
+          </div>
+        </div>
+
+        <div class="viewer-grid">
+          <div class="camera-panel glass-card">
+            <div class="live-pill">Live preview</div>
+            <video id="cameraFeed" autoplay playsinline muted></video>
+            <img id="imagePreview" alt="Uploaded ASL sign preview" hidden>
+            <canvas id="captureCanvas" hidden></canvas>
+            <div id="cameraPlaceholder" class="camera-placeholder">
+              <span>Camera idle</span>
+              <p>Turn on webcam access or upload an image to start real ASL predictions.</p>
+            </div>
+          </div>
+
+          <aside class="prediction-panel glass-card">
+            <div class="prediction-main">
+              <p class="section-tag">Current prediction</p>
+              <div class="prediction-letter" id="predictionLetter">-</div>
+              <div class="prediction-meta">
+                <span id="predictionLabel">Waiting for model</span>
+                <strong id="predictionConfidence">0%</strong>
+              </div>
+              <p id="statusMessage" class="status-text">Backend not checked yet.</p>
+            </div>
+
+            <div class="confidence-list" id="confidenceList"></div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="controls card split-layout">
+        <div class="compose-panel glass-card">
+          <div class="panel-header compact">
+            <div>
+              <p class="section-tag">Phrase builder</p>
+              <h3>Compose from predictions</h3>
+            </div>
+            <button id="clearPhraseBtn" class="mini-btn">Clear</button>
+          </div>
+
+          <div class="phrase-box" id="phraseBox"></div>
+
+          <div class="compose-actions">
+            <button id="appendPredictionBtn" class="primary-btn small">Add current sign</button>
+            <button id="addSpaceBtn" class="ghost-btn small">Add space</button>
+            <button id="deleteCharBtn" class="ghost-btn small">Delete</button>
+          </div>
+        </div>
+
+        <div class="library-panel glass-card">
+          <div class="panel-header compact">
+            <div>
+              <p class="section-tag">Quick set</p>
+              <h3>Model classes</h3>
+            </div>
+          </div>
+          <div class="chip-grid" id="classGrid"></div>
+        </div>
+      </section>
+
+      <section class="insights card split-layout">
+        <div class="insight-block glass-card">
+          <p class="section-tag">System notes</p>
+          <h3>Real inference flow</h3>
+          <ul class="feature-list">
+            <li>Browser camera preview with frame capture</li>
+            <li>Upload image inference against your ASL checkpoint</li>
+            <li>Confidence bars populated from softmax scores</li>
+            <li>Phrase composer for interpreted output</li>
+          </ul>
+        </div>
+
+        <div class="insight-block glass-card">
+          <p class="section-tag">Usage tip</p>
+          <h3>Best webcam results</h3>
+          <p class="muted-copy">
+            Keep one hand centered in frame, use a plain background if possible, and hold the sign steady for a moment.
+            Click <strong>Analyze frame</strong> or turn on <strong>Start live detection</strong> for repeated predictions.
+          </p>
+          <button id="checkBackendBtn" class="primary-btn small">Check backend</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
