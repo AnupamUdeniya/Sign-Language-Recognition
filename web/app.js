@@ -1,5 +1,5 @@
-const HF_API =
-  "https://anupam090-asl-sign-language-recognition.hf.space/run/predict";
+const HF_SPACE = "https://anupam090-asl-sign-language-recognition.hf.space";
+const HF_API = `${HF_SPACE}/call/predict`;
 
 const classes = [
   "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N",
@@ -37,15 +37,15 @@ function prettyLabel(label) {
 function normalizeLabel(label) {
   if (typeof label !== "string") return "nothing";
 
-  const cleaned = label.trim();
-  if (!cleaned) return "nothing";
+  const trimmed = label.trim();
+  if (!trimmed) return "nothing";
 
-  if (classes.includes(cleaned)) return cleaned;
+  if (classes.includes(trimmed)) return trimmed;
 
-  const upper = cleaned.toUpperCase();
+  const upper = trimmed.toUpperCase();
   if (classes.includes(upper)) return upper;
 
-  const lower = cleaned.toLowerCase();
+  const lower = trimmed.toLowerCase();
   if (classes.includes(lower)) return lower;
 
   return "nothing";
@@ -89,8 +89,8 @@ async function startCamera() {
     });
 
     cameraFeed.srcObject = mediaStream;
-    cameraFeed.playsInline = true;
     cameraFeed.muted = true;
+    cameraFeed.playsInline = true;
     await cameraFeed.play();
 
     setStatus("Camera started");
@@ -146,44 +146,137 @@ function fileToDataURL(fileOrBlob) {
     const reader = new FileReader();
 
     reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error("Failed to read image file"));
+    reader.onerror = () => reject(new Error("Failed to read image"));
 
     reader.readAsDataURL(fileOrBlob);
   });
 }
 
-async function buildGradioImagePayload(fileOrBlob) {
+async function buildImagePayload(fileOrBlob) {
   const dataUrl = await fileToDataURL(fileOrBlob);
 
   return {
     path: null,
     url: dataUrl,
-    orig_name: fileOrBlob.name || "capture.jpg",
     size: fileOrBlob.size || 0,
+    orig_name: fileOrBlob.name || "capture.jpg",
     mime_type: fileOrBlob.type || "image/jpeg",
     is_stream: false,
     meta: { _type: "gradio.FileData" }
   };
 }
 
-function extractLabel(result) {
-  let value = result?.data?.[0];
-
-  if (Array.isArray(value)) {
-    value = value[0];
+function extractLabelFromCompletedData(parsedData) {
+  if (Array.isArray(parsedData)) {
+    return normalizeLabel(parsedData[0]);
   }
 
-  if (typeof value === "string") {
-    return normalizeLabel(value);
+  if (typeof parsedData === "string") {
+    return normalizeLabel(parsedData);
   }
 
-  if (value && typeof value === "object") {
-    if (typeof value.label === "string") return normalizeLabel(value.label);
-    if (typeof value.text === "string") return normalizeLabel(value.text);
-    if (typeof value.value === "string") return normalizeLabel(value.value);
+  if (parsedData && Array.isArray(parsedData.data)) {
+    return normalizeLabel(parsedData.data[0]);
   }
 
   return "nothing";
+}
+
+async function createPredictionJob(fileOrBlob) {
+  const imagePayload = await buildImagePayload(fileOrBlob);
+
+  const response = await fetch(HF_API, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      data: [imagePayload]
+    })
+  });
+
+  const payload = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(payload?.error || `HTTP ${response.status}`);
+  }
+
+  if (!payload?.event_id) {
+    throw new Error("No event_id returned by API");
+  }
+
+  return payload.event_id;
+}
+
+async function waitForPredictionResult(eventId) {
+  const response = await fetch(`${HF_API}/${eventId}`, {
+    method: "GET",
+    headers: {
+      Accept: "text/event-stream"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  if (!response.body) {
+    throw new Error("No response stream from API");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+
+    const events = buffer.split("\n\n");
+    buffer = events.pop() || "";
+
+    for (const eventBlock of events) {
+      const lines = eventBlock.split("\n");
+      let eventName = "";
+      let dataText = "";
+
+      for (const line of lines) {
+        if (line.startsWith("event:")) {
+          eventName = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          dataText += line.slice(5).trim();
+        }
+      }
+
+      if (!dataText) continue;
+
+      if (eventName === "heartbeat") continue;
+
+      if (eventName === "error") {
+        try {
+          const parsedError = JSON.parse(dataText);
+          throw new Error(parsedError?.error || "API returned an error");
+        } catch {
+          throw new Error("API returned an error");
+        }
+      }
+
+      if (eventName === "complete") {
+        let parsed;
+        try {
+          parsed = JSON.parse(dataText);
+        } catch {
+          throw new Error("Invalid prediction response");
+        }
+
+        return extractLabelFromCompletedData(parsed);
+      }
+    }
+
+    if (done) break;
+  }
+
+  throw new Error("Prediction stream ended without a result");
 }
 
 async function sendImageForPrediction(fileOrBlob) {
@@ -193,36 +286,12 @@ async function sendImageForPrediction(fileOrBlob) {
   setStatus("Running AI model...");
 
   try {
-    const imgPayload = await buildGradioImagePayload(fileOrBlob);
-
-    const response = await fetch(HF_API, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        data: [imgPayload]
-      })
-    });
-
-    const rawText = await response.text();
-    let result;
-
-    try {
-      result = JSON.parse(rawText);
-    } catch {
-      throw new Error("Invalid API response");
-    }
-
-    if (!response.ok) {
-      throw new Error(result?.error || `HTTP ${response.status}`);
-    }
-
-    const label = extractLabel(result);
+    const eventId = await createPredictionJob(fileOrBlob);
+    const label = await waitForPredictionResult(eventId);
 
     updatePrediction({
       label,
-      confidence: 100
+      confidence: label === "nothing" ? 0 : 100
     });
 
     setStatus(`Detected ${prettyLabel(label)}`);
@@ -282,10 +351,10 @@ function handleUpload(e) {
   e.target.value = "";
 }
 
-startCameraBtn.addEventListener("click", startCamera);
-stopCameraBtn.addEventListener("click", stopCamera);
-liveDetectBtn.addEventListener("click", toggleLiveDetection);
-analyzeFrameBtn.addEventListener("click", analyzeCurrentFrame);
-imageUpload.addEventListener("change", handleUpload);
+startCameraBtn?.addEventListener("click", startCamera);
+stopCameraBtn?.addEventListener("click", stopCamera);
+liveDetectBtn?.addEventListener("click", toggleLiveDetection);
+analyzeFrameBtn?.addEventListener("click", analyzeCurrentFrame);
+imageUpload?.addEventListener("change", handleUpload);
 
-setStatus("Connected to HuggingFace model");
+setStatus("Connected to Hugging Face model");
