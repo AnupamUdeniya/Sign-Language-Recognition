@@ -1,3 +1,4 @@
+import base64
 import io
 import os
 import sys
@@ -46,12 +47,37 @@ def load_model():
     if not MODEL_PATH.exists():
         raise FileNotFoundError(f"Model checkpoint not found: {MODEL_PATH}")
 
-    model = get_model(num_classes=len(CLASS_NAMES), pretrained_backbone=False).to(DEVICE)
+    model = get_model(
+        num_classes=len(CLASS_NAMES),
+        pretrained_backbone=False
+    ).to(DEVICE)
     state_dict = torch.load(MODEL_PATH, map_location=DEVICE)
     model.load_state_dict(state_dict)
     model.eval()
     _model = model
     return _model
+
+
+def decode_data_url(image_data):
+    if not isinstance(image_data, str) or "," not in image_data:
+        raise ValueError("Invalid image data URL.")
+
+    _, encoded = image_data.split(",", 1)
+    return base64.b64decode(encoded)
+
+
+def read_request_image():
+    uploaded_file = request.files.get("image")
+    if uploaded_file is not None:
+        return uploaded_file.read()
+
+    payload = request.get_json(silent=True) or {}
+    image_data = payload.get("image") or payload.get("data_url")
+
+    if image_data:
+        return decode_data_url(image_data)
+
+    raise ValueError("No image file or data URL received.")
 
 
 def predict_image(image_bytes):
@@ -86,23 +112,32 @@ def index():
 
 
 @app.get("/health")
+@app.get("/api/health")
 def health():
     try:
         load_model()
-        return jsonify({"status": "ok", "device": str(DEVICE)})
+        return jsonify({
+            "status": "ok",
+            "backend": "local-pytorch",
+            "device": str(DEVICE)
+        })
     except Exception as exc:
-        return jsonify({"status": "error", "error": str(exc)}), 500
+        return jsonify({
+            "status": "error",
+            "error": str(exc)
+        }), 500
 
 
 @app.post("/predict")
+@app.post("/api/predict")
 def predict():
-    file = request.files.get("image")
-    if file is None:
-        return jsonify({"error": "No image file received."}), 400
-
     try:
-        result = predict_image(file.read())
+        image_bytes = read_request_image()
+        result = predict_image(image_bytes)
+        result["backend"] = "local-pytorch"
         return jsonify(result)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
@@ -114,4 +149,4 @@ def static_files(path):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5000"))
-    app.run(host="127.0.0.1", port=port, debug=False)
+    app.run(host="0.0.0.0", port=port, debug=False)

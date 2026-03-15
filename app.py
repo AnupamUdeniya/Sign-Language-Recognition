@@ -1,46 +1,52 @@
 import gradio as gr
 import torch
 from PIL import Image
-import torchvision.transforms as transforms
+from torchvision import transforms
+
 from scripts.model import get_model
 
-# Device
-device = torch.device("cpu")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Load model
-model = get_model(29)
-model.load_state_dict(torch.load("best_asl_hybrid.pth", map_location=device))
-model.to(device)
-model.eval()
-
-# Image transform
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor()
+CLASS_NAMES = sorted([
+    "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N",
+    "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
+    "del", "nothing", "space"
 ])
 
-# Classes
-classes = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ") + ["del", "space", "nothing"]
+MODEL = get_model(
+    num_classes=len(CLASS_NAMES),
+    pretrained_backbone=False
+)
+MODEL.load_state_dict(torch.load("best_asl_hybrid.pth", map_location=DEVICE))
+MODEL.to(DEVICE)
+MODEL.eval()
+
+TRANSFORM = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize(
+        [0.485, 0.456, 0.406],
+        [0.229, 0.224, 0.225]
+    )
+])
 
 
-def predict(img):
+def predict(image_array):
+    if image_array is None:
+        return "nothing (confidence: 0.00)"
 
-    # Convert numpy image to PIL
-    img = Image.fromarray(img).convert("RGB")
+    image = Image.fromarray(image_array).convert("RGB")
+    tensor = TRANSFORM(image).unsqueeze(0).to(DEVICE)
 
-    # Transform
-    img = transform(img).unsqueeze(0).to(device)
-
-    # Inference
     with torch.no_grad():
-        outputs = model(img)
-        probs = torch.softmax(outputs, dim=1)
-        pred = torch.argmax(probs, dim=1).item()
-        confidence = probs[0][pred].item()
+        logits = MODEL(tensor)
+        probabilities = torch.softmax(logits, dim=1)[0]
 
-    result = f"{classes[pred]}  (confidence: {confidence:.2f})"
+    predicted_index = int(torch.argmax(probabilities).item())
+    predicted_label = CLASS_NAMES[predicted_index]
+    confidence = probabilities[predicted_index].item()
 
-    return result
+    return f"{predicted_label} (confidence: {confidence:.2f})"
 
 
 demo = gr.Interface(
