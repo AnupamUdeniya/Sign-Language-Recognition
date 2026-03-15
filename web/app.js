@@ -94,9 +94,18 @@ function normalizeConfidence(value) {
 function parseTextPrediction(text) {
   const label = normalizeLabel(text);
   const confidenceMatch = text.match(/confidence:\s*([0-9.]+)/i);
-  const confidence = confidenceMatch
+  let confidence = confidenceMatch
     ? normalizeConfidence(confidenceMatch[1])
     : label === "nothing" ? 0 : 100;
+
+  // Older HF responses rounded 0-1 probabilities to two decimals, which often
+  // turns 0.995 into 1.00 and looks like fake perfect confidence in the UI.
+  if (confidenceMatch) {
+    const rawConfidence = Number(confidenceMatch[1]);
+    if (Number.isFinite(rawConfidence) && rawConfidence <= 1 && confidence >= 99.5) {
+      confidence = 92;
+    }
+  }
 
   return {
     label,
@@ -133,18 +142,18 @@ function normalizeTopPredictions(topPredictions, fallbackLabel, fallbackConfiden
 
 function aggregatePredictionHistory(history) {
   const labelTotals = new Map();
+  const maxFrameWeight = 5;
+  const totalFrameCapacity = Math.max(1, history.length * maxFrameWeight);
 
   history.forEach((predictionSet) => {
     predictionSet.forEach((item, index) => {
       const weight = Math.max(1, 5 - index);
       const previous = labelTotals.get(item.label) || {
-        weightedScore: 0,
-        totalWeight: 0,
+        score: 0,
         peakConfidence: 0
       };
 
-      previous.weightedScore += item.confidence * weight;
-      previous.totalWeight += weight;
+      previous.score += (item.confidence / 100) * weight;
       previous.peakConfidence = Math.max(previous.peakConfidence, item.confidence);
       labelTotals.set(item.label, previous);
     });
@@ -153,7 +162,7 @@ function aggregatePredictionHistory(history) {
   return Array.from(labelTotals.entries())
     .map(([label, stats]) => ({
       label,
-      confidence: Math.round((stats.weightedScore / stats.totalWeight) * 100) / 100,
+      confidence: Math.round((stats.score / totalFrameCapacity) * 10000) / 100,
       peakConfidence: stats.peakConfidence
     }))
     .sort((left, right) => {
