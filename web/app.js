@@ -37,14 +37,6 @@ function setStatus(msg){
 statusMessage.textContent = msg;
 }
 
-function blobToBase64(blob){
-return new Promise(resolve=>{
-const reader = new FileReader();
-reader.onloadend = ()=>resolve(reader.result);
-reader.readAsDataURL(blob);
-});
-}
-
 function updatePrediction(result){
 
 currentPrediction = result;
@@ -56,25 +48,6 @@ result.label;
 
 predictionLabel.textContent = prettyLabel(result.label);
 predictionConfidence.textContent = `${result.confidence}%`;
-}
-
-function appendPrediction(){
-
-const txt = phraseBox.textContent;
-
-if(currentPrediction.label==="space"){
-phraseBox.textContent = txt+" ";
-return;
-}
-
-if(currentPrediction.label==="del"){
-phraseBox.textContent = txt.slice(0,-1);
-return;
-}
-
-if(currentPrediction.label==="nothing") return;
-
-phraseBox.textContent = txt+currentPrediction.label;
 }
 
 async function startCamera(){
@@ -138,16 +111,12 @@ setStatus("Running AI model...");
 
 try{
 
-const base64 = await blobToBase64(blob);
+const formData = new FormData();
+formData.append("data", blob);
 
 const response = await fetch(HF_API,{
 method:"POST",
-headers:{
-"Content-Type":"application/json"
-},
-body:JSON.stringify({
-data:[base64]
-})
+body:formData
 });
 
 const result = await response.json();
@@ -155,13 +124,10 @@ const result = await response.json();
 let label="nothing";
 
 if(result && result.data){
-
 label=result.data[0];
-
 if(Array.isArray(label)){
 label=label[0];
 }
-
 }
 
 updatePrediction({
