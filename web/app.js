@@ -1,5 +1,5 @@
 const HF_API =
-"https://anupam090-asl-sign-language-recognition.hf.space/gradio_api/predict";
+"https://anupam090-asl-sign-language-recognition.hf.space/api/predict";
 
 const classes = [
 "A","B","C","D","E","F","G","H","I","J","K","L","M","N",
