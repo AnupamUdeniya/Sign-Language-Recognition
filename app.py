@@ -33,7 +33,11 @@ TRANSFORM = transforms.Compose([
 
 def predict(image_array):
     if image_array is None:
-        return "nothing (confidence: 0.00)"
+        return {
+            "label": "nothing",
+            "confidence": 0.0,
+            "top_predictions": []
+        }
 
     image = Image.fromarray(image_array).convert("RGB")
     tensor = TRANSFORM(image).unsqueeze(0).to(DEVICE)
@@ -42,17 +46,29 @@ def predict(image_array):
         logits = MODEL(tensor)
         probabilities = torch.softmax(logits, dim=1)[0]
 
-    predicted_index = int(torch.argmax(probabilities).item())
-    predicted_label = CLASS_NAMES[predicted_index]
-    confidence = probabilities[predicted_index].item()
+    top_values, top_indices = torch.topk(
+        probabilities,
+        k=min(5, len(CLASS_NAMES))
+    )
+    top_predictions = []
 
-    return f"{predicted_label} (confidence: {confidence:.2f})"
+    for score, index in zip(top_values.tolist(), top_indices.tolist()):
+        top_predictions.append({
+            "label": CLASS_NAMES[index],
+            "confidence": round(score * 100, 2)
+        })
+
+    return {
+        "label": top_predictions[0]["label"],
+        "confidence": top_predictions[0]["confidence"],
+        "top_predictions": top_predictions
+    }
 
 
 demo = gr.Interface(
     fn=predict,
     inputs=gr.Image(type="numpy", label="Upload ASL Hand Sign"),
-    outputs=gr.Textbox(label="Prediction"),
+    outputs=gr.JSON(label="Prediction"),
     title="ASL Sign Language Recognition",
     description="Upload a hand sign image and the model will predict the ASL alphabet."
 )

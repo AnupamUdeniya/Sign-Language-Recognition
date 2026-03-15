@@ -8,6 +8,9 @@ const classes = [
   "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
   "del", "nothing", "space"
 ];
+const MIN_CONFIDENCE = 60;
+const MIN_MARGIN = 8;
+const LIVE_HISTORY_SIZE = 4;
 
 const predictionLetter = document.getElementById("predictionLetter");
 const predictionLabel = document.getElementById("predictionLabel");
@@ -43,6 +46,7 @@ let mediaStream = null;
 let liveDetectionTimer = null;
 let requestInFlight = false;
 let previewUrl = "";
+let livePredictionHistory = [];
 
 function prettyLabel(label) {
   if (label === "del") return "Delete";
@@ -127,6 +131,42 @@ function normalizeTopPredictions(topPredictions, fallbackLabel, fallbackConfiden
     .slice(0, 5);
 }
 
+function aggregatePredictionHistory(history) {
+  const labelTotals = new Map();
+
+  history.forEach((predictionSet) => {
+    predictionSet.forEach((item, index) => {
+      const weight = Math.max(1, 5 - index);
+      const previous = labelTotals.get(item.label) || {
+        weightedScore: 0,
+        totalWeight: 0,
+        peakConfidence: 0
+      };
+
+      previous.weightedScore += item.confidence * weight;
+      previous.totalWeight += weight;
+      previous.peakConfidence = Math.max(previous.peakConfidence, item.confidence);
+      labelTotals.set(item.label, previous);
+    });
+  });
+
+  return Array.from(labelTotals.entries())
+    .map(([label, stats]) => ({
+      label,
+      confidence: Math.round((stats.weightedScore / stats.totalWeight) * 100) / 100,
+      peakConfidence: stats.peakConfidence
+    }))
+    .sort((left, right) => {
+      if (right.confidence !== left.confidence) {
+        return right.confidence - left.confidence;
+      }
+
+      return right.peakConfidence - left.peakConfidence;
+    })
+    .slice(0, 5)
+    .map(({ peakConfidence, ...item }) => item);
+}
+
 function normalizePredictionPayload(payload) {
   if (!payload) {
     return {
@@ -183,6 +223,67 @@ function normalizePredictionPayload(payload) {
     label: "nothing",
     confidence: 0,
     top_predictions: []
+  };
+}
+
+function clearLivePredictionHistory() {
+  livePredictionHistory = [];
+}
+
+function applyReliabilityRules(payload, options = {}) {
+  const normalized = normalizePredictionPayload(payload);
+  const useHistory = Boolean(options.useHistory);
+
+  let topPredictions = normalized.top_predictions.length > 0
+    ? normalized.top_predictions
+    : [
+        {
+          label: normalized.label,
+          confidence: normalized.confidence
+        }
+      ];
+
+  if (useHistory) {
+    livePredictionHistory.push(topPredictions);
+    if (livePredictionHistory.length > LIVE_HISTORY_SIZE) {
+      livePredictionHistory = livePredictionHistory.slice(-LIVE_HISTORY_SIZE);
+    }
+    topPredictions = aggregatePredictionHistory(livePredictionHistory);
+  } else {
+    clearLivePredictionHistory();
+  }
+
+  const bestPrediction = topPredictions[0] || {
+    label: "nothing",
+    confidence: 0
+  };
+  const secondPrediction = topPredictions[1] || {
+    label: "nothing",
+    confidence: 0
+  };
+  const confidenceGap = bestPrediction.confidence - secondPrediction.confidence;
+  const isUnreliable =
+    bestPrediction.label === "nothing" ||
+    bestPrediction.confidence < MIN_CONFIDENCE ||
+    (
+      secondPrediction.label !== "nothing" &&
+      confidenceGap < MIN_MARGIN
+    );
+
+  if (isUnreliable) {
+    return {
+      label: "nothing",
+      confidence: 0,
+      top_predictions: topPredictions,
+      unreliable: true
+    };
+  }
+
+  return {
+    label: bestPrediction.label,
+    confidence: bestPrediction.confidence,
+    top_predictions: topPredictions,
+    unreliable: false
   };
 }
 
@@ -291,6 +392,7 @@ function showUploadedPreview(file) {
   if (!imagePreview) return;
 
   revokePreviewUrl();
+  clearLivePredictionHistory();
   previewUrl = URL.createObjectURL(file);
   imagePreview.src = previewUrl;
   setFeedState("image");
@@ -343,6 +445,8 @@ function stopLiveDetection() {
   if (liveDetectBtn) {
     liveDetectBtn.textContent = "Start live detection";
   }
+
+  clearLivePredictionHistory();
 }
 
 async function startCamera() {
@@ -370,6 +474,7 @@ async function startCamera() {
     cameraFeed.playsInline = true;
     await cameraFeed.play();
 
+    clearLivePredictionHistory();
     setFeedState("camera");
     setStatus("Camera started. Capture a frame or enable live detection.");
   } catch (error) {
@@ -389,6 +494,7 @@ function stopCamera() {
 
   mediaStream = null;
   cameraFeed.srcObject = null;
+  clearLivePredictionHistory();
   setFeedState(imagePreview?.src ? "image" : "idle");
   setStatus("Camera stopped");
 }
@@ -455,23 +561,29 @@ async function requestPrediction(fileOrBlob) {
     throw new Error(payload?.error || `HTTP ${response.status}`);
   }
 
-  return normalizePredictionPayload(payload);
+  return payload;
 }
 
-async function sendImageForPrediction(fileOrBlob) {
+async function sendImageForPrediction(fileOrBlob, options = {}) {
   if (requestInFlight) return;
 
   requestInFlight = true;
   setStatus("Running AI model...");
 
   try {
-    const result = await requestPrediction(fileOrBlob);
+    const payload = await requestPrediction(fileOrBlob);
+    const result = applyReliabilityRules(payload, options);
     updatePrediction(result);
-    setStatus(
-      `Detected ${prettyLabel(result.label)} with ${result.confidence}% confidence`
-    );
+    if (result.unreliable || result.label === "nothing") {
+      setStatus("Uncertain prediction. Hold the sign steady or improve lighting.");
+    } else {
+      setStatus(
+        `Detected ${prettyLabel(result.label)} with ${result.confidence}% confidence`
+      );
+    }
   } catch (error) {
     console.error(error);
+    clearLivePredictionHistory();
     updatePrediction({
       label: "nothing",
       confidence: 0,
@@ -483,7 +595,7 @@ async function sendImageForPrediction(fileOrBlob) {
   }
 }
 
-async function analyzeCurrentFrame() {
+async function analyzeCurrentFrame(options = {}) {
   if (!mediaStream) {
     setStatus("Start camera first");
     return;
@@ -491,7 +603,7 @@ async function analyzeCurrentFrame() {
 
   try {
     const blob = await captureCurrentFrameBlob();
-    await sendImageForPrediction(blob);
+    await sendImageForPrediction(blob, options);
   } catch (error) {
     setStatus(error.message);
   }
@@ -511,7 +623,7 @@ function toggleLiveDetection() {
 
   liveDetectionTimer = window.setInterval(() => {
     if (!requestInFlight) {
-      analyzeCurrentFrame();
+      analyzeCurrentFrame({ useHistory: true });
     }
   }, 1400);
 
@@ -527,7 +639,7 @@ async function handleUpload(event) {
   if (!file) return;
 
   showUploadedPreview(file);
-  await sendImageForPrediction(file);
+  await sendImageForPrediction(file, { useHistory: false });
   event.target.value = "";
 }
 
